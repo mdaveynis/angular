@@ -47,12 +47,12 @@ export function buildView(
   return builderVisitor.nestedViewCount;
 }
 
-export function finishView(view: CompileView, targetStatements: o.Statement[]) {
+export function finishView(view: CompileView, targetStatements: o.Statement[], parentViewType?: o.Type) {
   view.afterNodes();
-  createViewTopLevelStmts(view, targetStatements);
+  createViewTopLevelStmts(view, targetStatements, parentViewType);
   view.nodes.forEach((node) => {
     if (node instanceof CompileElement && node.hasEmbeddedView) {
-      finishView(node.embeddedView, targetStatements);
+      finishView(node.embeddedView, targetStatements, view.classType);
     }
   });
 }
@@ -367,7 +367,7 @@ function mergeAttributeValue(attrName: string, attrValue1: string, attrValue2: s
   }
 }
 
-function createViewTopLevelStmts(view: CompileView, targetStatements: o.Statement[]) {
+function createViewTopLevelStmts(view: CompileView, targetStatements: o.Statement[], parentViewType: o.Type) {
   let nodeDebugInfosVar: o.Expression = o.NULL_EXPR;
   if (view.genConfig.genDebugInfo) {
     nodeDebugInfosVar = o.variable(
@@ -408,7 +408,7 @@ function createViewTopLevelStmts(view: CompileView, targetStatements: o.Statemen
             .toDeclStmt(o.importType(createIdentifier(Identifiers.RenderComponentType))));
   }
 
-  const viewClass = createViewClass(view, renderCompTypeVar, nodeDebugInfosVar);
+  const viewClass = createViewClass(view, parentViewType, renderCompTypeVar, nodeDebugInfosVar);
   targetStatements.push(viewClass);
 }
 
@@ -440,14 +440,14 @@ function createStaticNodeDebugInfo(node: CompileNode): o.Expression {
 }
 
 function createViewClass(
-    view: CompileView, renderCompTypeVar: o.ReadVarExpr,
+    view: CompileView, parentViewType: o.Type, renderCompTypeVar: o.ReadVarExpr,
     nodeDebugInfosVar: o.Expression): o.ClassStmt {
   const viewConstructorArgs = [
     new o.FnParam(
         ViewConstructorVars.viewUtils.name, o.importType(createIdentifier(Identifiers.ViewUtils))),
     new o.FnParam(
         ViewConstructorVars.parentView.name,
-        o.importType(createIdentifier(Identifiers.AppView), [o.DYNAMIC_TYPE])),
+        parentViewType || o.importType(createIdentifier(Identifiers.AppView), [o.DYNAMIC_TYPE])),
     new o.FnParam(ViewConstructorVars.parentIndex.name, o.NUMBER_TYPE),
     new o.FnParam(ViewConstructorVars.parentElement.name, o.DYNAMIC_TYPE)
   ];
@@ -489,6 +489,10 @@ function createViewClass(
     generateVisitRootNodesMethod(view), generateVisitProjectableNodesMethod(view),
     generateCreateEmbeddedViewsMethod(view)
   ].filter((method) => method.body.length > 0);
+  const viewFields : o.ClassField[] = [];
+  if (parentViewType) {
+    viewFields.push(new o.ClassField(ViewConstructorVars.parentView.name, parentViewType));
+  }
   const superClass = view.genConfig.genDebugInfo ? Identifiers.DebugAppView : Identifiers.AppView;
 
   const viewClass = createClassStmt({
@@ -496,7 +500,7 @@ function createViewClass(
     parent: o.importExpr(createIdentifier(superClass), [getContextType(view)]),
     parentArgs: superConstructorArgs,
     ctorParams: viewConstructorArgs,
-    builders: [{methods: viewMethods}, view]
+    builders: [{methods: viewMethods, fields: viewFields}, view]
   });
   return viewClass;
 }
